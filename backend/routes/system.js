@@ -1,55 +1,88 @@
-const express = require('express');
+/**
+ * 系统设置与审计日志路由
+ * 包含：审计日志查询、一键生成测试数据、用户管理（占位）
+ */
+const express = require("express");
 const router = express.Router();
-const pool = require('../db');
-const auth = require('../middlewares/auth');
-const { checkPermission } = require('../middlewares/auth');
+const pool = require("../db");
+const { checkPermission } = require("../middlewares/auth");
 
-// 系统模块所有接口都需要登录
-router.use(auth);
+router.use(require("../middlewares/auth"));
 
-// 1. 获取审计日志
-router.get('/logs', async (req, res) => {
-    try {
-        const [rows] = await pool.query(`
-      SELECT a.*, u.username 
+// ==================== 1. 获取审计日志 ====================
+router.get("/logs", async (req, res) => {
+  try {
+    const [rows] = await pool.query(`
+      SELECT 
+        a.*, 
+        DATE_FORMAT(a.create_time, '%Y-%m-%d %H:%i:%s') as create_time_str,
+        u.username 
       FROM audit_logs a 
       LEFT JOIN users u ON a.user_id = u.id 
       ORDER BY a.create_time DESC 
       LIMIT 100
     `);
-        res.json({ code: 200, data: rows });
-    } catch (err) {
-        console.error('获取日志失败:', err);
-        res.json({ code: 500, msg: '获取日志失败' });
-    }
+    const formattedRows = rows.map((row) => ({
+      ...row,
+      create_time: row.create_time_str,
+    }));
+    res.json({ code: 200, data: formattedRows });
+  } catch (err) {
+    console.error("获取日志失败:", err);
+    res.json({ code: 500, msg: "获取日志失败" });
+  }
 });
 
-// 2. 一键生成模拟数据（仅管理员可用，答辩救场神技）
-router.post('/generate-mock', checkPermission('system:reset'), async (req, res) => {
+// ==================== 2. 一键生成模拟数据 ====================
+router.post(
+  "/generate-mock",
+  checkPermission("system:reset"),
+  async (req, res) => {
     try {
-        // 清空旧销售数据
-        await pool.query('TRUNCATE TABLE sales');
+      await pool.query("TRUNCATE TABLE sales");
 
-        // 重新生成 500 条随机数据
-        let values = [];
-        for (let i = 0; i < 500; i++) {
-            const goodsId = Math.floor(Math.random() * 11) + 1; // 随机商品 ID 1-11
-            const qty = Math.floor(Math.random() * 3) + 1;      // 随机数量 1-3
-            const price = (Math.random() * 100 + 5).toFixed(2);  // 随机金额
-            const carbon = (Math.random() * 10).toFixed(2);     // 随机碳减排量
-            const storeId = Math.random() > 0.5 ? 1 : 2;         // 随机分配到A店或B店
-            values.push(`(${goodsId}, ${qty}, ${price}, ${carbon}, DATE_SUB(NOW(), INTERVAL FLOOR(RAND()*30) DAY), ${storeId}, 5)`);
-        }
+      let values = [];
+      for (let i = 0; i < 500; i++) {
+        const goodsId = Math.floor(Math.random() * 11) + 1;
+        const qty = Math.floor(Math.random() * 3) + 1;
+        const price = (Math.random() * 100 + 5).toFixed(2);
+        const carbon = (Math.random() * 10).toFixed(2);
+        const storeId = Math.random() > 0.5 ? 1 : 2;
+        values.push(
+          `(${goodsId}, ${qty}, ${price}, ${carbon}, DATE_SUB(NOW(), INTERVAL FLOOR(RAND()*30) DAY), ${storeId}, 5)`,
+        );
+      }
+      const sql =
+        "INSERT INTO sales(goods_id, quantity, total_price, carbon_saving_total, sale_time, store_id, operator_id) VALUES " +
+        values.join(",");
+      await pool.query(sql);
 
-        const sql = 'INSERT INTO sales(goods_id, quantity, total_price, carbon_saving_total, sale_time, store_id, operator_id) VALUES ' + values.join(',');
-        await pool.query(sql);
-
-        res.json({ code: 200, msg: '已重新生成 500 条销售数据' });
+      res.json({ code: 200, msg: "已重新生成 500 条销售数据" });
     } catch (err) {
-        console.error('生成模拟数据失败:', err);
-        res.json({ code: 500, msg: '生成失败: ' + err.message });
+      console.error("生成模拟数据失败:", err);
+      res.json({ code: 500, msg: "生成失败: " + err.message });
     }
+  },
+);
+
+// ==================== 3. 获取用户列表 ====================
+router.get("/users", async (req, res) => {
+  try {
+    const [rows] = await pool.query(`
+      SELECT id, username, real_name, role, store_id, create_time
+      FROM users
+      ORDER BY id ASC
+    `);
+    res.json({ code: 200, data: rows });
+  } catch (err) {
+    console.error("获取用户列表失败:", err);
+    res.json({ code: 500, msg: "获取用户列表失败" });
+  }
 });
 
-// ⚠️ 最后一行必须是这个，绝对不能丢
+// ==================== 4. 添加用户（占位，暂不实现） ====================
+router.post("/users", checkPermission("system:reset"), async (req, res) => {
+  res.json({ code: 501, msg: "用户管理功能开发中，敬请期待" });
+});
+
 module.exports = router;

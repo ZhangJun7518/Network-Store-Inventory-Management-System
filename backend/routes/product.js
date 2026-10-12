@@ -1,6 +1,6 @@
 /**
  * 商品管理路由
- * 包含：获取商品列表、新增商品、商品入库、删除商品
+ * 包含：获取商品列表、新增商品、编辑商品、商品入库、删除商品
  * 入库时会自动记录库存流水
  */
 const express = require("express");
@@ -9,7 +9,6 @@ const pool = require("../db");
 const { checkPermission } = require("../middlewares/auth");
 const { recordInventoryLog } = require("./inventory");
 
-// 所有接口都需要登录鉴权
 router.use(require("../middlewares/auth"));
 
 // ==================== 1. 获取商品列表 ====================
@@ -65,7 +64,43 @@ router.post("/", checkPermission("product:add"), async (req, res) => {
   }
 });
 
-// ==================== 3. 商品入库（增加库存） ====================
+// ==================== 3. 编辑商品 ====================
+router.put("/:id", checkPermission("product:add"), async (req, res) => {
+  const { id } = req.params;
+  const {
+    goods_name,
+    category,
+    spec,
+    purchase_price,
+    sell_price,
+    unit,
+    warning_num,
+    carbon_saving,
+  } = req.body;
+
+  try {
+    await pool.query(
+      "UPDATE goods SET goods_name=?, category=?, spec=?, purchase_price=?, sell_price=?, unit=?, warning_num=?, carbon_saving=? WHERE id=?",
+      [
+        goods_name,
+        category,
+        spec,
+        purchase_price,
+        sell_price,
+        unit,
+        warning_num,
+        carbon_saving,
+        id,
+      ],
+    );
+    res.json({ code: 200, msg: "编辑成功" });
+  } catch (err) {
+    console.error("编辑商品失败:", err);
+    res.json({ code: 500, msg: "编辑失败: " + err.message });
+  }
+});
+
+// ==================== 4. 商品入库 ====================
 router.post(
   "/stock-in",
   checkPermission("product:stock_in"),
@@ -80,7 +115,6 @@ router.post(
     try {
       await connection.beginTransaction();
 
-      // 1. 查询商品并加锁
       const [goods] = await connection.query(
         "SELECT * FROM goods WHERE id = ? FOR UPDATE",
         [goods_id],
@@ -88,13 +122,11 @@ router.post(
       if (goods.length === 0) throw new Error("商品不存在");
       const item = goods[0];
 
-      // 2. 增加库存
       await connection.query(
         "UPDATE goods SET stock = stock + ? WHERE id = ?",
         [quantity, goods_id],
       );
 
-      // 3. 👈 记录库存流水
       await recordInventoryLog(connection, {
         goods_id: goods_id,
         store_id: item.store_id,
@@ -106,13 +138,12 @@ router.post(
         remark: `商品入库 ${quantity}${item.unit}`,
       });
 
-      // 4. 写入审计日志
       await connection.query(
         "INSERT INTO audit_logs(user_id, action, details) VALUES (?, ?, ?)",
         [
           req.user.id,
           "商品入库",
-          `商品 ${item.goods_name} 入库 ${quantity}${item.unit}，当前库存 ${item.stock + quantity}`,
+          `商品 ${item.goods_name} 入库 ${quantity}${item.unit}`,
         ],
       );
 
@@ -128,7 +159,7 @@ router.post(
   },
 );
 
-// ==================== 4. 删除商品 ====================
+// ==================== 5. 删除商品 ====================
 router.delete("/:id", checkPermission("product:delete"), async (req, res) => {
   try {
     await pool.query("DELETE FROM goods WHERE id = ?", [req.params.id]);

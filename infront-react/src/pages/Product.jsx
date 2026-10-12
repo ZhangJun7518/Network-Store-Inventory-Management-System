@@ -1,6 +1,6 @@
 /**
  * 商品管理页面
- * 支持：商品列表、销售记录、URL 参数控制 Tab 切换、从仓库平面图跳转过滤
+ * 支持：商品列表、销售记录、URL 参数控制 Tab 切换、编辑商品
  */
 import React, { useState, useEffect } from "react";
 import {
@@ -21,6 +21,7 @@ import {
   PlusOutlined,
   QrcodeOutlined,
   ImportOutlined,
+  EditOutlined,
 } from "@ant-design/icons";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import {
@@ -28,6 +29,7 @@ import {
   addProduct,
   deleteProduct,
   stockIn,
+  updateProduct,
 } from "../api/product";
 import { getSalesList } from "../api/sales";
 import AuthButton from "../components/AuthButton";
@@ -36,8 +38,6 @@ import { useTranslation } from "react-i18next";
 const Product = () => {
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
-
-  // 👈 从 URL 读取参数（search 关键词 + tab 编号）
   const [searchParams] = useSearchParams();
   const searchKeyword = searchParams.get("search") || "";
   const tabParam = searchParams.get("tab") || "1";
@@ -46,13 +46,14 @@ const Product = () => {
   const [salesData, setSalesData] = useState([]);
   const [loading, setLoading] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isStockInOpen, setIsStockInOpen] = useState(false);
   const [currentGoods, setCurrentGoods] = useState(null);
   const [form] = Form.useForm();
+  const [editForm] = Form.useForm();
   const [stockInForm] = Form.useForm();
   const userInfo = JSON.parse(localStorage.getItem("userInfo") || "{}");
 
-  // 获取商品列表
   const fetchData = async () => {
     setLoading(true);
     try {
@@ -65,13 +66,12 @@ const Product = () => {
     }
   };
 
-  // 获取销售记录
   const fetchSales = async () => {
     try {
       const res = await getSalesList();
       setSalesData(res.data);
     } catch (error) {
-      console.error("获取销售记录失败", error);
+      console.error(error);
     }
   };
 
@@ -80,7 +80,6 @@ const Product = () => {
     fetchSales();
   }, []);
 
-  // 新增商品
   const handleAdd = async (values) => {
     try {
       if (userInfo.role === "store_manager")
@@ -95,7 +94,18 @@ const Product = () => {
     }
   };
 
-  // 删除商品
+  const handleEdit = async (values) => {
+    try {
+      await updateProduct(currentGoods.id, values);
+      message.success("编辑成功");
+      setIsEditModalOpen(false);
+      editForm.resetFields();
+      fetchData();
+    } catch (error) {
+      message.error("编辑失败");
+    }
+  };
+
   const handleDelete = async (id) => {
     try {
       await deleteProduct(id);
@@ -106,7 +116,6 @@ const Product = () => {
     }
   };
 
-  // 商品入库
   const handleStockIn = async (values) => {
     try {
       await stockIn({ goods_id: currentGoods.id, quantity: values.quantity });
@@ -119,7 +128,12 @@ const Product = () => {
     }
   };
 
-  // 商品列表列
+  const openEditModal = (record) => {
+    setCurrentGoods(record);
+    editForm.setFieldsValue(record);
+    setIsEditModalOpen(true);
+  };
+
   const productColumns = [
     { title: "ID", dataIndex: "id", key: "id", width: 60 },
     {
@@ -187,6 +201,14 @@ const Product = () => {
           >
             {t("product.stock_in") || "入库"}
           </AuthButton>
+          <AuthButton
+            permission="product:add"
+            type="link"
+            icon={<EditOutlined />}
+            onClick={() => openEditModal(record)}
+          >
+            {t("product.edit") || "编辑"}
+          </AuthButton>
           <Button
             type="link"
             icon={<QrcodeOutlined />}
@@ -207,7 +229,6 @@ const Product = () => {
     },
   ];
 
-  // 销售记录列（时间已格式化）
   const salesColumns = [
     { title: "ID", dataIndex: "id", key: "id", width: 60 },
     {
@@ -233,11 +254,8 @@ const Product = () => {
       key: "sale_time",
       render: (text) => {
         if (!text) return "-";
-        // 如果后端返回的是标准时间格式，直接使用
-        if (typeof text === "string" && text.includes("-")) {
+        if (typeof text === "string" && text.includes("-"))
           return text.replace("T", " ").substring(0, 19);
-        }
-        // 兜底：用本地时间格式化
         return new Date(text).toLocaleString("zh-CN", {
           year: "numeric",
           month: "2-digit",
@@ -256,7 +274,6 @@ const Product = () => {
     },
   ];
 
-  // 👈 根据 URL 参数过滤商品数据
   const displayData = searchKeyword
     ? data.filter((item) => item.goods_name.includes(searchKeyword))
     : data;
@@ -280,7 +297,6 @@ const Product = () => {
                   >
                     {t("product.add") || "新增商品"}
                   </AuthButton>
-
                   {searchKeyword && (
                     <Tag
                       color="blue"
@@ -296,7 +312,6 @@ const Product = () => {
                     </Tag>
                   )}
                 </Space>
-
                 <Table
                   key={i18n.language}
                   rowKey="id"
@@ -399,6 +414,61 @@ const Product = () => {
               />
             </Form.Item>
           )}
+        </Form>
+      </Modal>
+
+      {/* 编辑商品弹窗 */}
+      <Modal
+        title={t("product.edit") || "编辑商品"}
+        open={isEditModalOpen}
+        onOk={() => editForm.submit()}
+        onCancel={() => setIsEditModalOpen(false)}
+        width={600}
+      >
+        <Form form={editForm} layout="vertical" onFinish={handleEdit}>
+          <Form.Item
+            name="goods_name"
+            label={t("product.name") || "商品名称"}
+            rules={[{ required: true }]}
+          >
+            <Input />
+          </Form.Item>
+          <Form.Item
+            name="category"
+            label={t("product.category") || "分类"}
+            rules={[{ required: true }]}
+          >
+            <Input />
+          </Form.Item>
+          <Form.Item name="spec" label={t("product.spec") || "规格"}>
+            <Input />
+          </Form.Item>
+          <Form.Item name="purchase_price" label="进货价">
+            <InputNumber style={{ width: "100%" }} min={0} />
+          </Form.Item>
+          <Form.Item
+            name="sell_price"
+            label={t("product.price") || "售价"}
+            rules={[{ required: true }]}
+          >
+            <InputNumber style={{ width: "100%" }} min={0} />
+          </Form.Item>
+          <Form.Item name="unit" label="单位">
+            <Input />
+          </Form.Item>
+          <Form.Item
+            name="warning_num"
+            label={t("product.warning") || "预警数量"}
+            rules={[{ required: true }]}
+          >
+            <InputNumber style={{ width: "100%" }} min={0} />
+          </Form.Item>
+          <Form.Item
+            name="carbon_saving"
+            label={t("product.carbon") || "碳减排系数(kg/件)"}
+          >
+            <InputNumber style={{ width: "100%" }} min={0} step={0.1} />
+          </Form.Item>
         </Form>
       </Modal>
 
