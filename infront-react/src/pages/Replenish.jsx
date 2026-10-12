@@ -1,6 +1,6 @@
 /**
  * 智能补货页面
- * 包含：补货建议（可编辑+一键补货）、补货任务单（状态管理+导出Excel）
+ * 支持 URL 参数控制 Tab 切换（?tab=1 建议 / ?tab=2 任务单）
  */
 import React, { useState, useEffect } from "react";
 import {
@@ -12,9 +12,6 @@ import {
   message,
   Space,
   InputNumber,
-  Checkbox,
-  Select,
-  DatePicker,
   Popconfirm,
   Row,
   Col,
@@ -23,11 +20,11 @@ import {
 import {
   ThunderboltOutlined,
   ReloadOutlined,
-  ExportOutlined,
   CheckCircleOutlined,
   ClockCircleOutlined,
   InboxOutlined,
 } from "@ant-design/icons";
+import { useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import dayjs from "dayjs";
 import {
@@ -39,19 +36,20 @@ import {
 
 const Replenish = () => {
   const { t, i18n } = useTranslation();
+  const [searchParams] = useSearchParams();
+  const tabParam = searchParams.get("tab") || "1";
+
   const [suggestions, setSuggestions] = useState([]);
   const [orders, setOrders] = useState([]);
   const [selectedKeys, setSelectedKeys] = useState([]);
-  const [editedQuantities, setEditedQuantities] = useState({}); // { goods_id: quantity }
+  const [editedQuantities, setEditedQuantities] = useState({});
   const [loading, setLoading] = useState(false);
 
-  // ==================== 数据请求 ====================
   const fetchSuggestions = async () => {
     setLoading(true);
     try {
       const res = await getSuggestions();
       setSuggestions(res.data);
-      // 初始化编辑数量为系统建议值
       const initQty = {};
       res.data.forEach((item) => {
         initQty[item.id] = item.suggest_quantity;
@@ -78,12 +76,8 @@ const Replenish = () => {
     fetchOrders();
   }, []);
 
-  // ==================== 一键补货 ====================
   const handleBatchReplenish = async () => {
-    if (selectedKeys.length === 0) {
-      return message.warning("请至少勾选一个商品");
-    }
-
+    if (selectedKeys.length === 0) return message.warning("请至少勾选一个商品");
     const items = selectedKeys.map((id) => {
       const item = suggestions.find((s) => s.id === id);
       return {
@@ -93,7 +87,6 @@ const Replenish = () => {
         expected_date: dayjs().add(3, "day").format("YYYY-MM-DD"),
       };
     });
-
     try {
       await createReplenishOrder(items);
       message.success(`成功创建 ${items.length} 条补货任务`);
@@ -105,7 +98,6 @@ const Replenish = () => {
     }
   };
 
-  // ==================== 确认到货入库 ====================
   const handleReceive = async (id) => {
     try {
       await receiveReplenishOrder(id);
@@ -116,7 +108,6 @@ const Replenish = () => {
     }
   };
 
-  // ==================== 补货建议表格列 ====================
   const suggestionColumns = [
     { title: "ID", dataIndex: "id", key: "id", width: 60 },
     {
@@ -131,7 +122,7 @@ const Replenish = () => {
       width: 100,
     },
     {
-      title: "当前库存",
+      title: t("product.stock") || "当前库存",
       dataIndex: "stock",
       key: "stock",
       width: 100,
@@ -140,46 +131,75 @@ const Replenish = () => {
       ),
     },
     {
-      title: "预警值",
+      title: t("product.warning") || "预警值",
       dataIndex: "warning_num",
       key: "warning_num",
       width: 80,
     },
     {
-      title: "日均销量",
+      title: t("replenish.avg_daily_sales") || "日均销量",
       dataIndex: "avg_daily_sales",
       key: "avg_daily_sales",
       width: 100,
       render: (text) => <Tag color="blue">{text}</Tag>,
     },
     {
-      title: "建议补货量",
+      title: t("replenish.rule_based_qty") || "规则补货量",
+      dataIndex: "rule_based_qty",
+      key: "rule_based_qty",
+      width: 110,
+      render: (text) => <Tag color="orange">{text}</Tag>,
+    },
+    {
+      title: t("replenish.smart_based_qty") || "智能补货量",
+      dataIndex: "smart_based_qty",
+      key: "smart_based_qty",
+      width: 110,
+      render: (text) => <Tag color="purple">{text}</Tag>,
+    },
+    {
+      title: t("replenish.suggest_quantity") || "建议补货量",
       dataIndex: "suggest_quantity",
       key: "suggest_quantity",
       width: 110,
       render: (text) => <Tag color="green">{text}</Tag>,
     },
     {
-      title: "实际补货量",
+      title: t("replenish.actual_quantity") || "实际补货量",
       key: "actual_quantity",
       width: 130,
       render: (_, record) => (
         <InputNumber
           min={1}
           value={editedQuantities[record.id]}
-          onChange={(val) =>
-            setEditedQuantities({ ...editedQuantities, [record.id]: val })
-          }
+          onChange={(val) => {
+            if (!val || val <= 0) {
+              setEditedQuantities({
+                ...editedQuantities,
+                [record.id]: record.suggest_quantity,
+              });
+              message.warning(
+                t("replenish.warning_zero") || "补货量不能为0，已恢复为建议值",
+              );
+            } else {
+              setEditedQuantities({ ...editedQuantities, [record.id]: val });
+            }
+          }}
           size="small"
           style={{ width: 100 }}
+          placeholder={`${t("replenish.suggest_quantity") || "建议"} ${record.suggest_quantity}`}
         />
       ),
     },
   ];
 
-  // ==================== 补货任务单表格列 ====================
   const orderColumns = [
-    { title: "补货单号", dataIndex: "order_no", key: "order_no", width: 180 },
+    {
+      title: t("replenish.order_no") || "补货单号",
+      dataIndex: "order_no",
+      key: "order_no",
+      width: 180,
+    },
     {
       title: t("product.name") || "商品名称",
       dataIndex: "goods_name",
@@ -192,41 +212,45 @@ const Replenish = () => {
       width: 100,
     },
     {
-      title: "补货数量",
+      title: t("replenish.actual_quantity") || "补货数量",
       dataIndex: "actual_quantity",
       key: "actual_quantity",
       width: 100,
     },
     {
-      title: "供应商",
+      title: t("replenish.supplier") || "供应商",
       dataIndex: "supplier",
       key: "supplier",
       width: 140,
       render: (text) => text || "-",
     },
     {
-      title: "预计到货",
+      title: t("replenish.expected_date") || "预计到货",
       dataIndex: "expected_date",
       key: "expected_date",
       width: 110,
       render: (text) => (text ? dayjs(text).format("YYYY-MM-DD") : "-"),
     },
     {
-      title: "状态",
+      title: t("replenish.status") || "状态",
       dataIndex: "status",
       key: "status",
-      width: 100,
+      width: 110,
       render: (text) => {
         const map = {
           pending: {
             color: "orange",
-            label: "待处理",
+            label: t("replenish.status_pending") || "待处理",
             icon: <ClockCircleOutlined />,
           },
-          ordered: { color: "blue", label: "已下单", icon: <InboxOutlined /> },
+          ordered: {
+            color: "blue",
+            label: t("replenish.status_ordered") || "已下单",
+            icon: <InboxOutlined />,
+          },
           received: {
             color: "green",
-            label: "已入库",
+            label: t("replenish.status_received") || "已入库",
             icon: <CheckCircleOutlined />,
           },
         };
@@ -239,35 +263,38 @@ const Replenish = () => {
       },
     },
     {
-      title: "操作",
+      title: t("product.action") || "操作",
       key: "action",
       width: 130,
       render: (_, record) =>
         record.status !== "received" ? (
           <Popconfirm
-            title="确认该补货单已到货并入库？"
+            title={
+              t("replenish.confirm_receive_tip") || "确认该补货单已到货并入库？"
+            }
             onConfirm={() => handleReceive(record.id)}
-            okText="确认"
-            cancelText="取消"
+            okText={t("replenish.ok") || "确认"}
+            cancelText={t("replenish.cancel") || "取消"}
           >
             <Button type="link" size="small" icon={<CheckCircleOutlined />}>
-              确认入库
+              {t("replenish.confirm_receive") || "确认入库"}
             </Button>
           </Popconfirm>
         ) : (
-          <span style={{ color: "#999" }}>已完成</span>
+          <span style={{ color: "#999" }}>
+            {t("replenish.done") || "已完成"}
+          </span>
         ),
     },
   ];
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-      {/* 顶部统计 */}
       <Row gutter={8}>
         <Col span={6}>
           <Card size="small" bodyStyle={{ padding: "8px 12px" }}>
             <Statistic
-              title="待补货商品"
+              title={t("replenish.pending_products") || "待补货商品"}
               value={suggestions.length}
               prefix={<ThunderboltOutlined />}
               valueStyle={{ color: "#cf1322", fontSize: 18 }}
@@ -277,7 +304,7 @@ const Replenish = () => {
         <Col span={6}>
           <Card size="small" bodyStyle={{ padding: "8px 12px" }}>
             <Statistic
-              title="补货任务单"
+              title={t("replenish.total_orders") || "补货任务单"}
               value={orders.length}
               prefix={<InboxOutlined />}
               valueStyle={{ color: "#1890ff", fontSize: 18 }}
@@ -287,7 +314,7 @@ const Replenish = () => {
         <Col span={6}>
           <Card size="small" bodyStyle={{ padding: "8px 12px" }}>
             <Statistic
-              title="待处理"
+              title={t("replenish.pending_orders") || "待处理"}
               value={orders.filter((o) => o.status === "pending").length}
               valueStyle={{ color: "#faad14", fontSize: 18 }}
             />
@@ -296,7 +323,7 @@ const Replenish = () => {
         <Col span={6}>
           <Card size="small" bodyStyle={{ padding: "8px 12px" }}>
             <Statistic
-              title="已入库"
+              title={t("replenish.received_orders") || "已入库"}
               value={orders.filter((o) => o.status === "received").length}
               valueStyle={{ color: "#3f8600", fontSize: 18 }}
             />
@@ -304,17 +331,17 @@ const Replenish = () => {
         </Col>
       </Row>
 
-      {/* Tabs */}
       <Card size="small" bodyStyle={{ padding: 0 }}>
         <Tabs
-          defaultActiveKey="1"
+          defaultActiveKey={tabParam}
           style={{ padding: "0 16px" }}
           items={[
             {
               key: "1",
               label: (
                 <span>
-                  <ThunderboltOutlined /> 补货建议
+                  <ThunderboltOutlined />{" "}
+                  {t("replenish.tab_suggestions") || "补货建议"}
                 </span>
               ),
               children: (
@@ -326,16 +353,17 @@ const Replenish = () => {
                       onClick={handleBatchReplenish}
                       disabled={selectedKeys.length === 0}
                     >
-                      一键补货 ({selectedKeys.length})
+                      {t("replenish.batch_replenish") || "一键补货"} (
+                      {selectedKeys.length})
                     </Button>
                     <Button
                       icon={<ReloadOutlined />}
                       onClick={fetchSuggestions}
                     >
-                      刷新
+                      {t("replenish.refresh") || "刷新"}
                     </Button>
                     <span style={{ color: "#888", fontSize: 12 }}>
-                      提示：补货量默认使用加权移动平均算法计算，可手动修改。
+                      {t("replenish.tip") || "提示：补货周期为 3 天"}
                     </span>
                   </Space>
                   <Table
@@ -358,7 +386,7 @@ const Replenish = () => {
               key: "2",
               label: (
                 <span>
-                  <InboxOutlined /> 补货任务单
+                  <InboxOutlined /> {t("replenish.tab_orders") || "补货任务单"}
                 </span>
               ),
               children: (

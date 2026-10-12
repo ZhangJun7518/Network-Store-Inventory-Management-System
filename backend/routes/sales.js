@@ -1,13 +1,13 @@
 /**
  * 销售与收银路由
- * 包含：收银结算（扣减库存+计算碳减排）、获取销售记录
+ * 包含：收银结算（扣减库存+计算碳减排+记录库存流水）、获取销售记录
  */
 const express = require("express");
 const router = express.Router();
 const pool = require("../db");
 const { checkPermission } = require("../middlewares/auth");
+const { recordInventoryLog } = require("./inventory");
 
-// 所有接口都需要登录鉴权
 router.use(require("../middlewares/auth"));
 
 // ==================== 1. 收银结算 ====================
@@ -19,7 +19,6 @@ router.post(
     const store_id = req.user.store_id;
     const operator_id = req.user.id;
 
-    // 基础校验
     if (!goods_id || !quantity || quantity <= 0) {
       return res.json({ code: 400, msg: "参数错误" });
     }
@@ -28,7 +27,7 @@ router.post(
     try {
       await connection.beginTransaction();
 
-      // 1. 查询商品并锁定行（防止并发超卖）
+      // 1. 查询商品并锁定行
       const [goods] = await connection.query(
         "SELECT * FROM goods WHERE id = ? FOR UPDATE",
         [goods_id],
@@ -49,7 +48,19 @@ router.post(
         [quantity, goods_id],
       );
 
-      // 4. 写入销售记录
+      // 4. 👈 记录库存流水
+      await recordInventoryLog(connection, {
+        goods_id: goods_id,
+        store_id: store_id,
+        change_type: "销售",
+        change_quantity: -quantity,
+        before_stock: item.stock,
+        after_stock: item.stock - quantity,
+        operator_id: operator_id,
+        remark: `销售 ${item.goods_name} × ${quantity}`,
+      });
+
+      // 5. 写入销售记录
       await connection.query(
         "INSERT INTO sales(goods_id, quantity, total_price, carbon_saving_total, store_id, operator_id) VALUES (?,?,?,?,?,?)",
         [
@@ -62,7 +73,7 @@ router.post(
         ],
       );
 
-      // 5. 写入审计日志
+      // 6. 写入审计日志
       await connection.query(
         "INSERT INTO audit_logs(user_id, action, details) VALUES (?, ?, ?)",
         [

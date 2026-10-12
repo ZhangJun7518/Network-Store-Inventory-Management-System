@@ -1,28 +1,27 @@
 services:
-  # ========== 1. 数据库 ==========
   mysql:
     image: mysql:8.0
     container_name: nesc-mysql
     environment:
       MYSQL_ROOT_PASSWORD: root123456
       MYSQL_DATABASE: nesc_db
+      TZ: Europe/Minsk
     ports:
-      - "3307:3306" # 宿主机用3307端口连接，避免和本地MySQL冲突
+      - "3307:3306"
     volumes:
       - ./init_sql:/docker-entrypoint-initdb.d
       - mysql_data:/var/lib/mysql
-    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci --default-time-zone=+03:00
     networks:
       - nesc-network
 
-  # ========== 2. 后端服务 ==========
   backend:
     build: ./backend
     container_name: nesc-backend
     environment:
       PORT: 3001
-      DB_HOST: mysql # 关键：用服务名 mysql 代替 localhost
-      DB_PORT: 3306 # 容器内部端口是 3306
+      DB_HOST: mysql
+      DB_PORT: 3306
       DB_USER: root
       DB_PASSWORD: root123456
       DB_NAME: nesc_db
@@ -35,16 +34,14 @@ services:
     networks:
       - nesc-network
 
-  # ========== 3. 前端服务 ==========
   frontend:
     build:
       context: ./infront-react
       args:
-        VITE_APP_TITLE: 网络商店库存管理系统
-
+        VITE_APP_TITLE: Network Store Inventory Management System
     container_name: nesc-frontend
     ports:
-      - "80:80" # 浏览器通过 http://localhost 或电脑IP访问
+      - "80:80"
     depends_on:
       - backend
     networks:

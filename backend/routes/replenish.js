@@ -1,6 +1,6 @@
 /**
  * 智能补货路由
- * 包含：智能补货建议、补货任务单管理、一键补货
+ * 包含：智能补货建议（每3天补货一次）、补货任务单管理、一键补货、确认入库
  */
 const express = require("express");
 const router = express.Router();
@@ -10,7 +10,7 @@ const { checkPermission } = require("../middlewares/auth");
 // 所有接口都需要登录
 router.use(require("../middlewares/auth"));
 
-// ==================== 1. 获取智能补货建议（加权移动平均算法） ====================
+// ==================== 1. 获取智能补货建议 ====================
 router.get("/suggestions", async (req, res) => {
   try {
     const isAdmin = req.user.role === "admin" || req.user.role === "hq_leader";
@@ -19,14 +19,12 @@ router.get("/suggestions", async (req, res) => {
     // 查询所有库存低于安全线的商品
     const [goods] = await pool.query(`
       SELECT 
-        g.id, g.goods_name, g.spec, g.unit, g.stock, g.warning_num, g.store_id,
-        (g.warning_num * 2) - g.stock AS simple_suggest
+        g.id, g.goods_name, g.spec, g.unit, g.stock, g.warning_num, g.store_id
       FROM goods g
       WHERE g.stock <= g.warning_num ${storeFilter}
       ORDER BY g.stock ASC
     `);
 
-    // 对每个商品，计算近 7 天加权移动平均
     const suggestions = [];
     for (const item of goods) {
       // 查询近 7 天该商品的每日销量
@@ -66,8 +64,19 @@ router.get("/suggestions", async (req, res) => {
       }
 
       const avgDailySales = weightTotal > 0 ? weightedSum / weightTotal : 0;
-      // 建议补货量 = 预测日销量 × 补货周期（7天） - 当前库存
-      const suggestQty = Math.max(0, Math.ceil(avgDailySales * 7 - item.stock));
+
+      // ==================== 补货算法（每3天补货一次） ====================
+      // 规则1（保底）：预警值 × 2 - 当前库存
+      const ruleBasedQty = Math.max(0, item.warning_num * 2 - item.stock);
+
+      // 规则2（智能）：加权日均销量 × 补货周期(3天) - 当前库存
+      const smartBasedQty = Math.max(
+        0,
+        Math.ceil(avgDailySales * 3 - item.stock),
+      );
+
+      // 取两者最大值，最小为1（保证实际补货量有默认值可编辑）
+      const finalSuggestQty = Math.max(ruleBasedQty, smartBasedQty, 1);
 
       suggestions.push({
         id: item.id,
@@ -78,8 +87,9 @@ router.get("/suggestions", async (req, res) => {
         warning_num: item.warning_num,
         store_id: item.store_id,
         avg_daily_sales: Number(avgDailySales.toFixed(2)),
-        suggest_quantity: suggestQty,
-        simple_suggest: item.simple_suggest,
+        suggest_quantity: finalSuggestQty,
+        rule_based_qty: ruleBasedQty,
+        smart_based_qty: smartBasedQty,
       });
     }
 
@@ -95,7 +105,7 @@ router.post(
   "/create",
   checkPermission("product:stock_in"),
   async (req, res) => {
-    const { items } = req.body; // items: [{ goods_id, quantity, supplier, expected_date }]
+    const { items } = req.body;
 
     if (!items || items.length === 0) {
       return res.json({ code: 400, msg: "补货商品不能为空" });
@@ -107,7 +117,6 @@ router.post(
 
       const orderNos = [];
       for (const item of items) {
-        // 生成补货单号：RO-日期-随机数
         const orderNo = `RO-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-${Math.floor(
           Math.random() * 1000,
         )
@@ -133,7 +142,6 @@ router.post(
         orderNos.push(orderNo);
       }
 
-      // 写入审计日志
       await connection.query(
         "INSERT INTO audit_logs(user_id, action, details) VALUES (?,?,?)",
         [
@@ -215,7 +223,6 @@ router.post(
     try {
       await connection.beginTransaction();
 
-      // 1. 查询补货单
       const [orders] = await connection.query(
         "SELECT * FROM replenish_orders WHERE id = ?",
         [id],
@@ -225,7 +232,6 @@ router.post(
 
       if (order.status === "received") throw new Error("该补货单已入库");
 
-      // 2. 查询商品当前库存
       const [goods] = await connection.query(
         "SELECT * FROM goods WHERE id = ? FOR UPDATE",
         [order.goods_id],
@@ -237,13 +243,11 @@ router.post(
       const beforeStock = item.stock;
       const afterStock = beforeStock + quantity;
 
-      // 3. 更新库存
       await connection.query("UPDATE goods SET stock = ? WHERE id = ?", [
         afterStock,
         order.goods_id,
       ]);
 
-      // 4. 写入库存流水
       await connection.query(
         `INSERT INTO inventory_logs 
        (goods_id, store_id, change_type, change_quantity, before_stock, after_stock, reference_id, operator_id, remark) 
@@ -261,13 +265,11 @@ router.post(
         ],
       );
 
-      // 5. 更新补货单状态
       await connection.query(
         "UPDATE replenish_orders SET status = ? WHERE id = ?",
         ["received", id],
       );
 
-      // 6. 写入审计日志
       await connection.query(
         "INSERT INTO audit_logs(user_id, action, details) VALUES (?,?,?)",
         [

@@ -13,14 +13,21 @@ router.get("/stats", async (req, res) => {
     const storeFilter = isAdmin ? "" : `WHERE store_id = ${req.user.store_id}`;
     const storeAnd = isAdmin ? "" : `AND store_id = ${req.user.store_id}`;
 
+    const clientTime =
+      req.query.client_time ||
+      new Date().toISOString().slice(0, 19).replace("T", " ");
+    const today = clientTime.slice(0, 10);
+
     const [goodsCount] = await pool.query(
       `SELECT COUNT(*) as count FROM goods ${storeFilter}`,
     );
     const [todaySales] = await pool.query(
-      `SELECT IFNULL(SUM(total_price), 0) as amount FROM sales WHERE DATE(sale_time) = CURDATE() ${storeAnd}`,
+      `SELECT IFNULL(SUM(total_price), 0) as amount FROM sales WHERE DATE(sale_time) = ? ${storeAnd}`,
+      [today],
     );
     const [todayCarbon] = await pool.query(
-      `SELECT IFNULL(SUM(carbon_saving_total), 0) as carbon FROM sales WHERE DATE(sale_time) = CURDATE() ${storeAnd}`,
+      `SELECT IFNULL(SUM(carbon_saving_total), 0) as carbon FROM sales WHERE DATE(sale_time) = ? ${storeAnd}`,
+      [today],
     );
     const [warningCount] = await pool.query(
       `SELECT COUNT(*) as count FROM goods WHERE stock <= warning_num ${storeAnd}`,
@@ -46,13 +53,23 @@ router.get("/trend", async (req, res) => {
   try {
     const isAdmin = req.user.role === "admin" || req.user.role === "hq_leader";
     const storeFilter = isAdmin ? "" : `AND store_id = ${req.user.store_id}`;
-    const [rows] = await pool.query(`
+    const clientTime =
+      req.query.client_time ||
+      new Date().toISOString().slice(0, 19).replace("T", " ");
+    const today = clientTime.slice(0, 10);
+
+    const [rows] = await pool.query(
+      `
       SELECT DATE_FORMAT(sale_time, '%Y-%m-%d') as date, SUM(total_price) as sales 
       FROM sales 
-      WHERE sale_time >= DATE_SUB(CURDATE(), INTERVAL 6 DAY) ${storeFilter} 
+      WHERE sale_time >= DATE_SUB(?, INTERVAL 6 DAY) ${storeFilter} 
+        AND sale_time < DATE_ADD(?, INTERVAL 1 DAY)
       GROUP BY DATE_FORMAT(sale_time, '%Y-%m-%d') 
       ORDER BY date ASC
-    `);
+    `,
+      [today, today],
+    );
+
     res.json({ code: 200, data: rows });
   } catch (err) {
     console.error(err);
@@ -85,6 +102,7 @@ router.get("/warnings", async (req, res) => {
       FROM goods 
       WHERE stock <= warning_num ${storeFilter} 
       ORDER BY stock ASC
+      LIMIT 5
     `);
     res.json({ code: 200, data: rows });
   } catch (err) {
@@ -113,7 +131,7 @@ router.get("/export-replenish", async (req, res) => {
     }
 
     const workbook = new ExcelJS.Workbook();
-    const worksheet = workbook.addWorksheet("智能补货清单");
+    const worksheet = workbook.addWorksheet("补货清单");
 
     worksheet.columns = [
       { header: "所属门店", key: "store_name", width: 15 },
@@ -167,20 +185,25 @@ router.get("/export-replenish", async (req, res) => {
   }
 });
 
-// ==================== 6. 库存周转率分析 ====================
+// ==================== 6. 库存周转率 ====================
 router.get("/turnover", async (req, res) => {
   try {
     const isAdmin = req.user.role === "admin" || req.user.role === "hq_leader";
     const storeFilter = isAdmin ? "" : `AND store_id = ${req.user.store_id}`;
+    const clientTime =
+      req.query.client_time ||
+      new Date().toISOString().slice(0, 19).replace("T", " ");
+    const today = clientTime.slice(0, 10);
 
-    // 近30天销售成本（用售价近似）
-    const [salesCost] = await pool.query(`
+    const [salesCost] = await pool.query(
+      `
       SELECT IFNULL(SUM(total_price), 0) as cost
       FROM sales
-      WHERE sale_time >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) ${storeFilter}
-    `);
+      WHERE sale_time >= DATE_SUB(?, INTERVAL 30 DAY) ${storeFilter}
+    `,
+      [today],
+    );
 
-    // 当前总库存金额（进货价 × 库存量）
     const [stockValue] = await pool.query(`
       SELECT IFNULL(SUM(purchase_price * stock), 0) as value
       FROM goods
@@ -204,6 +227,84 @@ router.get("/turnover", async (req, res) => {
   } catch (err) {
     console.error("获取库存周转率失败:", err);
     res.json({ code: 500, msg: "获取库存周转率失败" });
+  }
+});
+
+// ==================== 7. 智能调度台（待办汇总） ====================
+router.get("/todos", async (req, res) => {
+  try {
+    const isAdmin = req.user.role === "admin" || req.user.role === "hq_leader";
+    const storeAnd = isAdmin ? "" : `AND store_id = ${req.user.store_id}`;
+
+    const [pendingReplenish] = await pool.query(
+      `SELECT COUNT(*) as count FROM goods WHERE stock <= warning_num ${storeAnd}`,
+    );
+
+    const [pendingReceive] = await pool.query(
+      `SELECT COUNT(*) as count FROM replenish_orders WHERE status = 'pending' ${isAdmin ? "" : `AND store_id = ${req.user.store_id}`}`,
+    );
+
+    const [pendingTransfer] = await pool.query(`
+      SELECT COUNT(DISTINCT g1.id) as count
+      FROM goods g1
+      JOIN goods g2 ON g1.goods_name = g2.goods_name AND g1.store_id != g2.store_id
+      WHERE g1.stock <= g1.warning_num 
+        AND g2.stock > g2.warning_num * 3
+        ${isAdmin ? "" : `AND g1.store_id = ${req.user.store_id}`}
+    `);
+
+    const clientTime =
+      req.query.client_time ||
+      new Date().toISOString().slice(0, 19).replace("T", " ");
+    const today = clientTime.slice(0, 10);
+    const [todaySalesCount] = await pool.query(
+      `
+      SELECT COUNT(*) as count FROM sales
+      WHERE DATE(sale_time) = ?
+        ${isAdmin ? "" : `AND store_id = ${req.user.store_id}`}
+    `,
+      [today],
+    );
+
+    res.json({
+      code: 200,
+      data: {
+        pendingReplenish: pendingReplenish[0].count,
+        pendingReceive: pendingReceive[0].count,
+        pendingTransfer: pendingTransfer[0].count,
+        todaySalesCount: todaySalesCount[0].count,
+      },
+    });
+  } catch (err) {
+    console.error("获取待办汇总失败:", err);
+    res.json({ code: 500, msg: "获取待办汇总失败" });
+  }
+});
+
+// ==================== 8. 最近销售记录 Top 5 ====================
+router.get("/recent-sales", async (req, res) => {
+  try {
+    const isAdmin = req.user.role === "admin" || req.user.role === "hq_leader";
+    const storeFilter = isAdmin ? "" : `AND s.store_id = ${req.user.store_id}`;
+
+    const [rows] = await pool.query(`
+      SELECT 
+        s.id,
+        s.quantity,
+        s.total_price,
+        DATE_FORMAT(s.sale_time, '%m-%d %H:%i') as sale_time_str,
+        g.goods_name,
+        g.unit
+      FROM sales s
+      JOIN goods g ON s.goods_id = g.id
+      WHERE 1=1 ${storeFilter}
+      ORDER BY s.sale_time DESC
+      LIMIT 5
+    `);
+    res.json({ code: 200, data: rows });
+  } catch (err) {
+    console.error("获取最近销售记录失败:", err);
+    res.json({ code: 500, msg: "获取最近销售记录失败" });
   }
 });
 

@@ -1,10 +1,14 @@
 import React, { useEffect, useState } from "react";
-import { Row, Col, Card, Statistic, Table, Tag, message, Button } from "antd";
+import { Row, Col, Card, Statistic, Table, Tag, message } from "antd";
 import {
   AppstoreOutlined,
   ShoppingCartOutlined,
   CloudOutlined,
   WarningOutlined,
+  ThunderboltOutlined,
+  InboxOutlined,
+  SwapOutlined,
+  HistoryOutlined,
 } from "@ant-design/icons";
 import ReactECharts from "echarts-for-react";
 import {
@@ -12,8 +16,9 @@ import {
   getDashboardTrend,
   getDashboardCategory,
   getDashboardWarnings,
-  exportReplenish,
   getTurnover,
+  getTodos,
+  getRecentSales,
 } from "../api/dashboard";
 import { useTranslation } from "react-i18next";
 
@@ -34,6 +39,13 @@ const Dashboard = () => {
     turnoverRate: 0,
     turnoverDays: 0,
   });
+  const [todos, setTodos] = useState({
+    pendingReplenish: 0,
+    pendingReceive: 0,
+    pendingTransfer: 0,
+    todaySalesCount: 0,
+  });
+  const [recentSales, setRecentSales] = useState([]);
 
   useEffect(() => {
     fetchData();
@@ -41,41 +53,42 @@ const Dashboard = () => {
 
   const fetchData = async () => {
     try {
-      const [resStats, resTrend, resCategory, resWarnings, resTurnover] =
-        await Promise.all([
-          getDashboardStats(),
-          getDashboardTrend(),
-          getDashboardCategory(),
-          getDashboardWarnings(),
-          getTurnover(),
-        ]);
+      const clientTime = new Date()
+        .toISOString()
+        .slice(0, 19)
+        .replace("T", " ");
+      const [
+        resStats,
+        resTrend,
+        resCategory,
+        resWarnings,
+        resTurnover,
+        resTodos,
+        resRecent,
+      ] = await Promise.all([
+        getDashboardStats(clientTime),
+        getDashboardTrend(clientTime),
+        getDashboardCategory(),
+        getDashboardWarnings(),
+        getTurnover(clientTime),
+        getTodos(clientTime),
+        getRecentSales(),
+      ]);
       setStats(resStats.data);
       setTrendData(resTrend.data);
       setCategoryData(resCategory.data);
       setWarnings(resWarnings.data);
       setTurnover(resTurnover.data);
+      setTodos(resTodos.data);
+      setRecentSales(resRecent.data);
+
+      if (resWarnings.data.length > 0) {
+        message.warning(
+          `⚠️ ${resWarnings.data.length} ${t("dashboard.pending_replenish") || "个商品需要补货"}`,
+        );
+      }
     } catch (error) {
       message.error("数据获取失败");
-    }
-  };
-
-  const handleExport = async () => {
-    try {
-      const res = await exportReplenish();
-      const blob = new Blob([res], {
-        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      });
-      const url = window.URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = `replenish_${new Date().getTime()}.xlsx`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      window.URL.revokeObjectURL(url);
-      message.success("导出成功");
-    } catch (error) {
-      message.error("导出失败");
     }
   };
 
@@ -103,6 +116,7 @@ const Dashboard = () => {
         areaStyle: { color: "rgba(0, 58, 112, 0.1)" },
         lineStyle: { color: "#003a70", width: 2 },
         itemStyle: { color: "#003a70" },
+        animationDuration: 1500,
       },
     ],
   };
@@ -125,46 +139,75 @@ const Dashboard = () => {
           value: item.value,
           name: item.name,
         })),
+        animationDuration: 1500,
       },
     ],
   };
 
-  const columns = [
+  const warningColumns = [
     {
       title: t("product.name") || "商品名称",
       dataIndex: "goods_name",
       key: "goods_name",
+      ellipsis: true,
     },
     {
-      title: t("product.category") || "分类",
-      dataIndex: "category",
-      key: "category",
-      render: (text) => <Tag color="blue">{text}</Tag>,
-    },
-    {
-      title: t("product.stock") || "当前库存",
+      title: t("product.stock") || "库存",
       dataIndex: "stock",
       key: "stock",
+      width: 70,
       render: (text) => (
         <span style={{ color: "red", fontWeight: "bold" }}>{text}</span>
       ),
     },
     {
-      title: t("product.warning") || "预警值",
-      dataIndex: "warning_num",
-      key: "warning_num",
-    },
-    {
-      title: t("dashboard.suggest_quantity") || "建议补货量",
+      title: t("dashboard.suggest_quantity") || "建议补货",
       dataIndex: "suggest_quantity",
       key: "suggest_quantity",
+      width: 90,
       render: (text) => <Tag color="green">{text}</Tag>,
     },
   ];
 
+  const salesColumns = [
+    {
+      title: t("product.name") || "商品",
+      dataIndex: "goods_name",
+      key: "goods_name",
+      ellipsis: true,
+    },
+    {
+      title: t("product.quantity") || "数量",
+      dataIndex: "quantity",
+      key: "quantity",
+      width: 60,
+      render: (text, record) => (
+        <span>
+          {text}
+          {record.unit || ""}
+        </span>
+      ),
+    },
+    {
+      title: "¥",
+      dataIndex: "total_price",
+      key: "total_price",
+      width: 80,
+      render: (text) => (
+        <span style={{ color: "#cf1322" }}>¥{Number(text).toFixed(2)}</span>
+      ),
+    },
+    {
+      title: t("product.sale_time") || "时间",
+      dataIndex: "sale_time_str",
+      key: "sale_time_str",
+      width: 100,
+    },
+  ];
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-      {/* 第一行：统计卡片 */}
+    <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+      {/* 第一行：核心指标 */}
       <Row gutter={8}>
         <Col span={6}>
           <Card size="small" bodyStyle={{ padding: "8px 12px" }}>
@@ -210,14 +253,14 @@ const Dashboard = () => {
         </Col>
       </Row>
 
-      {/* 第二行：库存周转率 */}
+      {/* 第二行：效率指标 */}
       <Row gutter={8}>
         <Col span={8}>
           <Card size="small" bodyStyle={{ padding: "8px 12px" }}>
             <Statistic
-              title="库存周转率（近30天）"
+              title={t("dashboard.turnover_rate") || "库存周转率（近30天）"}
               value={turnover.turnoverRate}
-              suffix="次"
+              suffix={i18n.language === "zh" ? "次" : ""}
               valueStyle={{ color: "#1890ff", fontSize: 18 }}
             />
           </Card>
@@ -225,9 +268,9 @@ const Dashboard = () => {
         <Col span={8}>
           <Card size="small" bodyStyle={{ padding: "8px 12px" }}>
             <Statistic
-              title="周转天数"
+              title={t("dashboard.turnover_days") || "周转天数"}
               value={turnover.turnoverDays}
-              suffix="天"
+              suffix={i18n.language === "zh" ? "天" : "d"}
               valueStyle={{ color: "#faad14", fontSize: 18 }}
             />
           </Card>
@@ -235,7 +278,7 @@ const Dashboard = () => {
         <Col span={8}>
           <Card size="small" bodyStyle={{ padding: "8px 12px" }}>
             <Statistic
-              title="库存总价值"
+              title={t("dashboard.stock_value") || "库存总价值"}
               value={turnover.stockValue}
               precision={2}
               prefix="¥"
@@ -245,7 +288,124 @@ const Dashboard = () => {
         </Col>
       </Row>
 
-      {/* 第三行：图表 */}
+      {/* 第三行：智能调度台 */}
+      <Card
+        size="small"
+        title={
+          <span style={{ fontSize: 15, fontWeight: "bold", color: "#003a70" }}>
+            ⚡ {t("dashboard.smart_dispatch") || "智能调度台"}
+          </span>
+        }
+        bodyStyle={{ padding: "12px 16px" }}
+        style={{
+          background: "linear-gradient(135deg, #f0f7ff 0%, #ffffff 100%)",
+        }}
+      >
+        <Row gutter={[12, 12]}>
+          <Col span={6}>
+            <Card
+              className="todo-card warning"
+              size="small"
+              hoverable
+              onClick={() => (window.location.href = "/replenish")}
+              style={{ cursor: "pointer" }}
+              bodyStyle={{ padding: "12px" }}
+            >
+              <Statistic
+                title={
+                  <span>
+                    <ThunderboltOutlined />{" "}
+                    {t("dashboard.pending_replenish") || "待补货"}
+                  </span>
+                }
+                value={todos.pendingReplenish}
+                suffix={i18n.language === "zh" ? "项" : ""}
+                valueStyle={{ color: "#faad14", fontSize: 22 }}
+              />
+              <div className="todo-link">
+                {t("dashboard.go_process") || "去处理"} →
+              </div>
+            </Card>
+          </Col>
+          <Col span={6}>
+            <Card
+              className="todo-card info"
+              size="small"
+              hoverable
+              onClick={() => (window.location.href = "/replenish?tab=2")}
+              style={{ cursor: "pointer" }}
+              bodyStyle={{ padding: "12px" }}
+            >
+              <Statistic
+                title={
+                  <span>
+                    <InboxOutlined />{" "}
+                    {t("dashboard.pending_receive") || "待确认入库"}
+                  </span>
+                }
+                value={todos.pendingReceive}
+                suffix={i18n.language === "zh" ? "单" : ""}
+                valueStyle={{ color: "#1890ff", fontSize: 22 }}
+              />
+              <div className="todo-link">
+                {t("dashboard.go_process") || "去处理"} →
+              </div>
+            </Card>
+          </Col>
+          <Col span={6}>
+            <Card
+              className="todo-card purple"
+              size="small"
+              hoverable
+              onClick={() => (window.location.href = "/transfer")}
+              style={{ cursor: "pointer" }}
+              bodyStyle={{ padding: "12px" }}
+            >
+              <Statistic
+                title={
+                  <span>
+                    <SwapOutlined />{" "}
+                    {t("dashboard.pending_transfer") || "待调拨"}
+                  </span>
+                }
+                value={todos.pendingTransfer}
+                suffix={i18n.language === "zh" ? "项" : ""}
+                valueStyle={{ color: "#722ed1", fontSize: 22 }}
+              />
+              <div className="todo-link">
+                {t("dashboard.go_process") || "去处理"} →
+              </div>
+            </Card>
+          </Col>
+          <Col span={6}>
+            <Card
+              className="todo-card success"
+              size="small"
+              hoverable
+              onClick={() => (window.location.href = "/product?tab=2")}
+              style={{ cursor: "pointer" }}
+              bodyStyle={{ padding: "12px" }}
+            >
+              <Statistic
+                title={
+                  <span>
+                    <ShoppingCartOutlined />{" "}
+                    {t("dashboard.today_sales_count") || "今日销售"}
+                  </span>
+                }
+                value={todos.todaySalesCount}
+                suffix={i18n.language === "zh" ? "笔" : ""}
+                valueStyle={{ color: "#52c41a", fontSize: 22 }}
+              />
+              <div className="todo-link">
+                {t("dashboard.go_view") || "去查看"} →
+              </div>
+            </Card>
+          </Col>
+        </Row>
+      </Card>
+
+      {/* 第四行：图表 */}
       <Row gutter={8} style={{ height: "200px" }}>
         <Col span={16}>
           <Card
@@ -267,26 +427,66 @@ const Dashboard = () => {
         </Col>
       </Row>
 
-      {/* 第四行：补货建议表 */}
-      <Card
-        title={t("dashboard.replenish_title") || "🤖 智能补货建议"}
-        size="small"
-        style={{ flex: 1 }}
-        extra={
-          <Button type="primary" size="small" onClick={handleExport}>
-            {t("dashboard.export_btn") || "导出补货清单"}
-          </Button>
-        }
-        bodyStyle={{ padding: 0 }}
-      >
-        <Table
-          key={i18n.language}
-          rowKey="id"
-          columns={columns}
-          dataSource={warnings}
-          pagination={{ pageSize: 10, size: "small" }}
-        />
-      </Card>
+      {/* 第五行：底部两个表格 */}
+      <Row gutter={8}>
+        <Col span={12}>
+          <Card
+            size="small"
+            title={
+              <span>
+                🤖 {t("dashboard.replenish_top5") || "智能补货建议（Top 5）"}
+              </span>
+            }
+            extra={
+              <a
+                onClick={() => (window.location.href = "/replenish")}
+                style={{ color: "#1890ff" }}
+              >
+                {t("dashboard.view_all") || "查看全部"} →
+              </a>
+            }
+            bodyStyle={{ padding: 0 }}
+          >
+            <Table
+              key={i18n.language}
+              rowKey="id"
+              columns={warningColumns}
+              dataSource={warnings}
+              pagination={false}
+              size="small"
+            />
+          </Card>
+        </Col>
+        <Col span={12}>
+          <Card
+            size="small"
+            title={
+              <span>
+                <HistoryOutlined />{" "}
+                {t("dashboard.recent_sales_top5") || "最近销售记录（Top 5）"}
+              </span>
+            }
+            extra={
+              <a
+                onClick={() => (window.location.href = "/product?tab=2")}
+                style={{ color: "#1890ff" }}
+              >
+                {t("dashboard.view_all") || "查看全部"} →
+              </a>
+            }
+            bodyStyle={{ padding: 0 }}
+          >
+            <Table
+              key={i18n.language}
+              rowKey="id"
+              columns={salesColumns}
+              dataSource={recentSales}
+              pagination={false}
+              size="small"
+            />
+          </Card>
+        </Col>
+      </Row>
     </div>
   );
 };

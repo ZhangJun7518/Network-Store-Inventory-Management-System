@@ -1,20 +1,23 @@
 import request from "./request";
 
-// 获取顶部统计卡片数据
-export const getDashboardStats = () => request.get("/dashboard/stats");
+export const getDashboardStats = (clientTime) =>
+  request.get("/dashboard/stats", { params: { client_time: clientTime } });
 
-// 获取近7天销售趋势
-export const getDashboardTrend = () => request.get("/dashboard/trend");
+export const getDashboardTrend = (clientTime) =>
+  request.get("/dashboard/trend", { params: { client_time: clientTime } });
 
-// 获取分类库存占比
 export const getDashboardCategory = () => request.get("/dashboard/category");
 
-// 获取库存预警与智能补货列表
 export const getDashboardWarnings = () => request.get("/dashboard/warnings");
 
-// 导出补货清单 Excel
 export const exportReplenish = () =>
   request.get("/dashboard/export-replenish", { responseType: "blob" });
 
-// 获取库存周转率
-export const getTurnover = () => request.get("/dashboard/turnover");
+export const getTurnover = (clientTime) =>
+  request.get("/dashboard/turnover", { params: { client_time: clientTime } });
+
+export const getTodos = (clientTime) =>
+  request.get("/dashboard/todos", { params: { client_time: clientTime } });
+
+// 👈 新增：获取最近销售记录
+export const getRecentSales = () => request.get("/dashboard/recent-sales");

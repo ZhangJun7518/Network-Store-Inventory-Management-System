@@ -1,13 +1,14 @@
 /**
  * 智能调拨路由
  * 包含：获取全局资源、执行跨店调拨、获取调拨记录
+ * 调拨时自动记录库存流水
  */
 const express = require("express");
 const router = express.Router();
 const pool = require("../db");
 const { checkPermission } = require("../middlewares/auth");
+const { recordInventoryLog } = require("./inventory");
 
-// 所有接口都需要登录鉴权
 router.use(require("../middlewares/auth"));
 
 // ==================== 1. 获取全局资源 ====================
@@ -55,7 +56,19 @@ router.post(
         [quantity, goods_id],
       );
 
-      // 3. 查找目标门店是否有同名商品
+      // 3. 👈 记录来源门店的库存流水（减少）
+      await recordInventoryLog(connection, {
+        goods_id: goods_id,
+        store_id: from_store_id,
+        change_type: "调拨",
+        change_quantity: -quantity,
+        before_stock: item.stock,
+        after_stock: item.stock - quantity,
+        operator_id: req.user.id,
+        remark: `调拨 ${item.goods_name} × ${quantity} 到门店${to_store_id}`,
+      });
+
+      // 4. 查找目标门店是否有同名商品
       const [targetGoods] = await connection.query(
         "SELECT * FROM goods WHERE goods_name = ? AND store_id = ? FOR UPDATE",
         [item.goods_name, to_store_id],
@@ -67,9 +80,21 @@ router.post(
           "UPDATE goods SET stock = stock + ? WHERE id = ?",
           [quantity, targetGoods[0].id],
         );
+
+        // 👈 记录目标门店的库存流水（增加）
+        await recordInventoryLog(connection, {
+          goods_id: targetGoods[0].id,
+          store_id: to_store_id,
+          change_type: "调拨",
+          change_quantity: quantity,
+          before_stock: targetGoods[0].stock,
+          after_stock: targetGoods[0].stock + quantity,
+          operator_id: req.user.id,
+          remark: `从门店${from_store_id} 调入 ${item.goods_name} × ${quantity}`,
+        });
       } else {
-        // 目标店没有该商品，自动新建一条记录
-        await connection.query(
+        // 目标店没有该商品，自动新建
+        const [insertResult] = await connection.query(
           "INSERT INTO goods(goods_name, category, spec, purchase_price, sell_price, unit, stock, warning_num, carbon_saving, store_id) VALUES (?,?,?,?,?,?,?,?,?,?)",
           [
             item.goods_name,
@@ -84,9 +109,21 @@ router.post(
             to_store_id,
           ],
         );
+
+        // 👈 记录新商品的库存流水
+        await recordInventoryLog(connection, {
+          goods_id: insertResult.insertId,
+          store_id: to_store_id,
+          change_type: "调拨",
+          change_quantity: quantity,
+          before_stock: 0,
+          after_stock: quantity,
+          operator_id: req.user.id,
+          remark: `从门店${from_store_id} 调入 ${item.goods_name} × ${quantity}（新建商品）`,
+        });
       }
 
-      // 4. 记录审计日志
+      // 5. 记录审计日志
       await connection.query(
         "INSERT INTO audit_logs(user_id, action, details) VALUES (?, ?, ?)",
         [

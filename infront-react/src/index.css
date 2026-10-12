@@ -122,3 +122,65 @@ body {
   background: rgba(255, 255, 255, 0.6) !important;
   backdrop-filter: blur(6px) !important;
 }
+
+/* ==================== 智能调度台卡片动态效果 ==================== */
+.todo-card {
+  transition: all 0.3s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.todo-card:hover {
+  transform: scale(1.03);
+  box-shadow: 0 8px 24px rgba(0, 180, 255, 0.25);
+}
+
+/* 待补货 - 橙色呼吸光 */
+.todo-card.warning {
+  border-left: 4px solid #faad14;
+}
+.todo-card.warning:hover {
+  box-shadow: 0 0 20px rgba(250, 173, 20, 0.4);
+}
+
+/* 待入库 - 蓝色呼吸光 */
+.todo-card.info {
+  border-left: 4px solid #1890ff;
+}
+.todo-card.info:hover {
+  box-shadow: 0 0 20px rgba(24, 144, 255, 0.4);
+}
+
+/* 待调拨 - 紫色呼吸光 */
+.todo-card.purple {
+  border-left: 4px solid #722ed1;
+}
+.todo-card.purple:hover {
+  box-shadow: 0 0 20px rgba(114, 46, 209, 0.4);
+}
+
+/* 今日销售 - 绿色呼吸光 */
+.todo-card.success {
+  border-left: 4px solid #52c41a;
+}
+.todo-card.success:hover {
+  box-shadow: 0 0 20px rgba(82, 196, 26, 0.4);
+}
+
+/* 卡片链接文字 */
+.todo-card .todo-link {
+  font-size: 12px;
+  color: #1890ff;
+  margin-top: 4px;
+  opacity: 0.7;
+  transition: opacity 0.3s ease;
+}
+.todo-card:hover .todo-link {
+  opacity: 1;
+}
+
+/* 数字滚动动画 */
+.countup-number {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}

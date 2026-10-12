@@ -1,11 +1,13 @@
 /**
  * 商品管理路由
  * 包含：获取商品列表、新增商品、商品入库、删除商品
+ * 入库时会自动记录库存流水
  */
 const express = require("express");
 const router = express.Router();
 const pool = require("../db");
 const { checkPermission } = require("../middlewares/auth");
+const { recordInventoryLog } = require("./inventory");
 
 // 所有接口都需要登录鉴权
 router.use(require("../middlewares/auth"));
@@ -92,7 +94,19 @@ router.post(
         [quantity, goods_id],
       );
 
-      // 3. 写入审计日志
+      // 3. 👈 记录库存流水
+      await recordInventoryLog(connection, {
+        goods_id: goods_id,
+        store_id: item.store_id,
+        change_type: "入库",
+        change_quantity: quantity,
+        before_stock: item.stock,
+        after_stock: item.stock + quantity,
+        operator_id: req.user.id,
+        remark: `商品入库 ${quantity}${item.unit}`,
+      });
+
+      // 4. 写入审计日志
       await connection.query(
         "INSERT INTO audit_logs(user_id, action, details) VALUES (?, ?, ?)",
         [

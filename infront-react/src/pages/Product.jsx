@@ -1,6 +1,6 @@
 /**
  * 商品管理页面
- * 支持：商品列表、销售记录、从仓库平面图跳转过来时自动过滤
+ * 支持：商品列表、销售记录、URL 参数控制 Tab 切换、从仓库平面图跳转过滤
  */
 import React, { useState, useEffect } from "react";
 import {
@@ -37,9 +37,10 @@ const Product = () => {
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
 
-  // 👈 从 URL 读取搜索关键词（从仓库平面图跳转过来时带过来的）
+  // 👈 从 URL 读取参数（search 关键词 + tab 编号）
   const [searchParams] = useSearchParams();
   const searchKeyword = searchParams.get("search") || "";
+  const tabParam = searchParams.get("tab") || "1";
 
   const [data, setData] = useState([]);
   const [salesData, setSalesData] = useState([]);
@@ -206,7 +207,7 @@ const Product = () => {
     },
   ];
 
-  // 销售记录列
+  // 销售记录列（时间已格式化）
   const salesColumns = [
     { title: "ID", dataIndex: "id", key: "id", width: 60 },
     {
@@ -226,7 +227,27 @@ const Product = () => {
       dataIndex: "carbon_saving_total",
       key: "carbon_saving_total",
     },
-    { title: "销售时间", dataIndex: "sale_time", key: "sale_time" },
+    {
+      title: "销售时间",
+      dataIndex: "sale_time",
+      key: "sale_time",
+      render: (text) => {
+        if (!text) return "-";
+        // 如果后端返回的是标准时间格式，直接使用
+        if (typeof text === "string" && text.includes("-")) {
+          return text.replace("T", " ").substring(0, 19);
+        }
+        // 兜底：用本地时间格式化
+        return new Date(text).toLocaleString("zh-CN", {
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+          hour: "2-digit",
+          minute: "2-digit",
+          hour12: false,
+        });
+      },
+    },
     {
       title: t("product.store") || "所属门店",
       dataIndex: "store_id",
@@ -243,7 +264,7 @@ const Product = () => {
   return (
     <Card bordered={false}>
       <Tabs
-        defaultActiveKey="1"
+        defaultActiveKey={tabParam}
         items={[
           {
             key: "1",
@@ -260,7 +281,6 @@ const Product = () => {
                     {t("product.add") || "新增商品"}
                   </AuthButton>
 
-                  {/* 👈 从平面图跳转过来时的筛选提示 */}
                   {searchKeyword && (
                     <Tag
                       color="blue"
