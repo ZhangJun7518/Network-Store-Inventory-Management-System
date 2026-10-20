@@ -1,6 +1,7 @@
 /**
  * 智能补货页面
- * 支持 URL 参数控制 Tab 切换（?tab=1 建议 / ?tab=2 任务单）
+ * - 补货建议：勾选商品，一键补货 / 打印补货单
+ * - 待处理任务：查看补货单状态，确认入库
  */
 import React, { useState, useEffect } from "react";
 import {
@@ -23,16 +24,20 @@ import {
   CheckCircleOutlined,
   ClockCircleOutlined,
   InboxOutlined,
+  PrinterOutlined,
 } from "@ant-design/icons";
 import { useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import dayjs from "dayjs";
+import { createRoot } from "react-dom/client";
 import {
   getSuggestions,
   createReplenishOrder,
   getReplenishOrders,
   receiveReplenishOrder,
 } from "../api/replenish";
+import { ReplenishReport } from "../components/ReportTemplates";
+import { generatePDF } from "../utils/printReport";
 
 const Replenish = () => {
   const { t, i18n } = useTranslation();
@@ -76,6 +81,7 @@ const Replenish = () => {
     fetchOrders();
   }, []);
 
+  // ==================== 一键补货 ====================
   const handleBatchReplenish = async () => {
     if (selectedKeys.length === 0) return message.warning("请至少勾选一个商品");
     const items = selectedKeys.map((id) => {
@@ -98,6 +104,50 @@ const Replenish = () => {
     }
   };
 
+  // ==================== 打印补货单（从补货建议处打印） ====================
+  const handlePrintSuggestions = () => {
+    if (selectedKeys.length === 0) {
+      return message.warning("请至少勾选一条补货建议");
+    }
+
+    // 生成单号
+    const d = new Date();
+    const dateStr = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
+    const timeStr = `${String(d.getHours()).padStart(2, "0")}${String(d.getMinutes()).padStart(2, "0")}`;
+    const orderNo = `RO-${dateStr}-${timeStr}`;
+
+    // 把补货建议数据转换成补货单格式
+    const selectedItems = suggestions
+      .filter((s) => selectedKeys.includes(s.id))
+      .map((item) => ({
+        ...item,
+        actual_quantity: editedQuantities[item.id] || item.suggest_quantity,
+        order_no: orderNo,
+        supplier: "待确认",
+        expected_date: dayjs().add(3, "day").format("YYYY-MM-DD"),
+        create_time: new Date().toISOString(),
+      }));
+
+    const tempDiv = document.createElement("div");
+    tempDiv.style.position = "fixed";
+    tempDiv.style.left = "-9999px";
+    tempDiv.style.top = "0";
+    document.body.appendChild(tempDiv);
+
+    const root = createRoot(tempDiv);
+    root.render(<ReplenishReport orders={selectedItems} />);
+
+    setTimeout(() => {
+      const element = tempDiv.querySelector("#report-content");
+      generatePDF(element, `补货单_${orderNo}`);
+      setTimeout(() => {
+        root.unmount();
+        document.body.removeChild(tempDiv);
+      }, 1000);
+    }, 300);
+  };
+
+  // ==================== 确认入库 ====================
   const handleReceive = async (id) => {
     try {
       await receiveReplenishOrder(id);
@@ -108,6 +158,7 @@ const Replenish = () => {
     }
   };
 
+  // ==================== 表格列 ====================
   const suggestionColumns = [
     { title: "ID", dataIndex: "id", key: "id", width: 60 },
     {
@@ -187,7 +238,6 @@ const Replenish = () => {
           }}
           size="small"
           style={{ width: 100 }}
-          placeholder={`${t("replenish.suggest_quantity") || "建议"} ${record.suggest_quantity}`}
         />
       ),
     },
@@ -356,6 +406,16 @@ const Replenish = () => {
                       {t("replenish.batch_replenish") || "一键补货"} (
                       {selectedKeys.length})
                     </Button>
+                    {/* 👈 打印按钮移到补货建议处 */}
+                    <Button
+                      type="primary"
+                      icon={<PrinterOutlined />}
+                      onClick={handlePrintSuggestions}
+                      disabled={selectedKeys.length === 0}
+                    >
+                      {t("replenish.batch_print") || "打印补货单"} (
+                      {selectedKeys.length})
+                    </Button>
                     <Button
                       icon={<ReloadOutlined />}
                       onClick={fetchSuggestions}
@@ -363,7 +423,8 @@ const Replenish = () => {
                       {t("replenish.refresh") || "刷新"}
                     </Button>
                     <span style={{ color: "#888", fontSize: 12 }}>
-                      {t("replenish.tip") || "提示：补货周期为 3 天"}
+                      {t("replenish.print_tip") ||
+                        "提示：勾选多个商品，可合并成一张补货单打印"}
                     </span>
                   </Space>
                   <Table
@@ -384,20 +445,28 @@ const Replenish = () => {
             },
             {
               key: "2",
+              // 👈 Tab 名称改为"待处理任务"
               label: (
                 <span>
-                  <InboxOutlined /> {t("replenish.tab_orders") || "补货任务单"}
+                  <InboxOutlined /> {t("replenish.tab_pending") || "待处理任务"}
                 </span>
               ),
               children: (
-                <Table
-                  key={i18n.language}
-                  rowKey="id"
-                  columns={orderColumns}
-                  dataSource={orders}
-                  pagination={{ pageSize: 10, size: "small" }}
-                  scroll={{ x: "max-content" }}
-                />
+                <div>
+                  <Space style={{ marginBottom: 12 }} wrap>
+                    <Button icon={<ReloadOutlined />} onClick={fetchOrders}>
+                      {t("replenish.refresh") || "刷新"}
+                    </Button>
+                  </Space>
+                  <Table
+                    key={i18n.language}
+                    rowKey="id"
+                    columns={orderColumns}
+                    dataSource={orders}
+                    pagination={{ pageSize: 10, size: "small" }}
+                    scroll={{ x: "max-content" }}
+                  />
+                </div>
               ),
             },
           ]}

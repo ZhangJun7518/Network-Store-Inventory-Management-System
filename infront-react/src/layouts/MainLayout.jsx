@@ -20,7 +20,8 @@ import {
   DownOutlined,
   CarOutlined,
   GlobalOutlined,
-  ThunderboltOutlined, // 👈 新增：智能补货图标
+  ThunderboltOutlined,
+  ImportOutlined,
 } from "@ant-design/icons";
 import { Outlet, useNavigate, useLocation, Link } from "react-router-dom";
 import { login } from "../api/auth";
@@ -58,7 +59,6 @@ const MainLayout = () => {
     return () => window.removeEventListener("resize", checkMobile);
   }, []);
 
-  // 切换角色：把用户名存到 localStorage，跳转登录页自动填充
   const handleRoleSwitch = async ({ key }) => {
     localStorage.setItem("prefill_username", key);
     const original = JSON.parse(localStorage.getItem("originalUser") || "{}");
@@ -75,7 +75,6 @@ const MainLayout = () => {
     window.location.reload();
   };
 
-  // 退出登录：如果是模拟身份，恢复为原始用户；否则正常退出
   const handleLogout = async () => {
     if (isImpersonating) {
       try {
@@ -97,11 +96,18 @@ const MainLayout = () => {
     }
   };
 
-  // 菜单：去掉 Home 按钮，新增库存管理和智能补货
+  // 👈 菜单：理货员加上"库存管理"
   const getMenuItems = () => {
     const role = userInfo.role;
+
+    // 理货员：库存管理 + 收银台
     if (role === "stocker") {
       return [
+        {
+          key: "/inventory",
+          icon: <ImportOutlined />,
+          label: <Link to="/inventory">{t("menu.inventory")}</Link>,
+        },
         {
           key: "/sales",
           icon: <ShoppingCartOutlined />,
@@ -109,6 +115,8 @@ const MainLayout = () => {
         },
       ];
     }
+
+    // 管理员和总部领导
     if (role === "admin" || role === "hq_leader") {
       return [
         {
@@ -123,7 +131,7 @@ const MainLayout = () => {
         },
         {
           key: "/inventory",
-          icon: <AppstoreOutlined />,
+          icon: <ImportOutlined />,
           label: <Link to="/inventory">{t("menu.inventory")}</Link>,
         },
         {
@@ -148,6 +156,8 @@ const MainLayout = () => {
         },
       ];
     }
+
+    // 店长
     return [
       {
         key: "/dashboard",
@@ -161,7 +171,7 @@ const MainLayout = () => {
       },
       {
         key: "/inventory",
-        icon: <AppstoreOutlined />,
+        icon: <ImportOutlined />,
         label: <Link to="/inventory">{t("menu.inventory")}</Link>,
       },
       {

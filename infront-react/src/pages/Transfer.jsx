@@ -1,3 +1,8 @@
+/**
+ * 智能调拨页面
+ * 包含：跨门店库存查看、发起调拨申请、调拨记录查看（从审计日志提取）
+ * 调拨记录支持编辑、撤销（占位）
+ */
 import React, { useState, useEffect } from "react";
 import {
   Table,
@@ -12,8 +17,16 @@ import {
   Select,
   InputNumber,
   Tabs,
+  Space,
+  Popconfirm,
 } from "antd";
-import { SwapOutlined, HistoryOutlined } from "@ant-design/icons";
+import {
+  SwapOutlined,
+  HistoryOutlined,
+  EditOutlined,
+  UndoOutlined,
+  ReloadOutlined,
+} from "@ant-design/icons";
 import {
   getTransferResources,
   executeTransfer,
@@ -36,7 +49,7 @@ const Transfer = () => {
       const res = await getTransferResources();
       setData(res.data);
     } catch (error) {
-      message.error("Failed");
+      message.error("获取资源失败");
     } finally {
       setLoading(false);
     }
@@ -47,7 +60,7 @@ const Transfer = () => {
       const res = await getTransferRecords();
       setRecords(res.data);
     } catch (error) {
-      console.error(error);
+      console.error("获取调拨记录失败", error);
     }
   };
 
@@ -73,7 +86,7 @@ const Transfer = () => {
         goods_id: currentRecord.id,
         quantity: values.quantity,
       });
-      message.success(t("transfer.success") || "调拨成功");
+      message.success(t("transfer.success") || "调拨执行成功！库存已更新");
       setIsModalOpen(false);
       fetchData();
       fetchRecords();
@@ -82,6 +95,14 @@ const Transfer = () => {
     }
   };
 
+  // ==================== 占位功能 ====================
+  const showDevTip = (featureName) => {
+    message.info(
+      `${featureName} - ${t("system.dev_tip") || "功能开发中，敬请期待..."}`,
+    );
+  };
+
+  // 库存列表列
   const columns = [
     {
       title: t("transfer.product") || "商品名称",
@@ -92,7 +113,7 @@ const Transfer = () => {
       title: t("transfer.category") || "分类",
       dataIndex: "category",
       key: "category",
-      render: (text) => <Tag>{text}</Tag>,
+      render: (text) => <Tag color="blue">{t(`category.${text}`) || text}</Tag>,
     },
     {
       title: t("transfer.store") || "所属门店",
@@ -100,7 +121,7 @@ const Transfer = () => {
       key: "store_id",
       render: (text) => (
         <Tag color={text === 1 ? "blue" : "green"}>
-          {text === 1 ? "A" : "B"}
+          {text === 1 ? "A店" : "B店"}
         </Tag>
       ),
     },
@@ -125,12 +146,14 @@ const Transfer = () => {
     },
   ];
 
+  // 调拨记录列（👈 新增编辑和撤销按钮）
   const recordColumns = [
     { title: "ID", dataIndex: "id", key: "id", width: 80 },
     {
       title: t("transfer.operator") || "操作人",
       dataIndex: "operator_name",
       key: "operator_name",
+      width: 100,
     },
     {
       title: t("transfer.detail") || "调拨详情",
@@ -141,7 +164,39 @@ const Transfer = () => {
       title: t("transfer.time") || "操作时间",
       dataIndex: "create_time",
       key: "create_time",
-      width: 200,
+      width: 180,
+    },
+    {
+      title: t("transfer.action") || "操作",
+      key: "action",
+      width: 180,
+      render: (_, record) => (
+        <Space size="small">
+          <Button
+            type="link"
+            size="small"
+            icon={<EditOutlined />}
+            onClick={() => showDevTip(t("transfer.edit") || "编辑调拨")}
+          >
+            {t("transfer.edit") || "编辑"}
+          </Button>
+          <Popconfirm
+            title={
+              t("transfer.cancel_confirm") ||
+              "确定要撤销这条调拨记录吗？撤销后库存将恢复。"
+            }
+            onConfirm={() =>
+              showDevTip(t("transfer.cancel_transfer") || "撤销调拨")
+            }
+            okText={t("transfer.ok") || "确定"}
+            cancelText={t("transfer.cancel") || "取消"}
+          >
+            <Button type="link" size="small" danger icon={<UndoOutlined />}>
+              {t("transfer.cancel_transfer") || "撤销调拨"}
+            </Button>
+          </Popconfirm>
+        </Space>
+      ),
     },
   ];
 
@@ -160,18 +215,27 @@ const Transfer = () => {
               {
                 key: "1",
                 label: t("transfer.tab_apply") || "发起调拨",
-                // 👈 核心修复：key={i18n.language}
                 children: (
-                  <Table
-                    key={i18n.language}
-                    rowKey="id"
-                    columns={columns}
-                    dataSource={data}
-                    loading={loading}
-                    pagination={false}
-                    scroll={{ y: "calc(100vh - 320px)" }}
-                    style={{ padding: "0 16px" }}
-                  />
+                  <div style={{ paddingBottom: 16 }}>
+                    <Space style={{ marginBottom: 12, paddingLeft: 16 }}>
+                      <Button
+                        icon={<ReloadOutlined />}
+                        onClick={fetchData}
+                        size="small"
+                      >
+                        {t("inventory.refresh") || "刷新"}
+                      </Button>
+                    </Space>
+                    <Table
+                      key={i18n.language}
+                      rowKey="id"
+                      columns={columns}
+                      dataSource={data}
+                      loading={loading}
+                      pagination={{ pageSize: 10, size: "small" }}
+                      scroll={{ x: "max-content" }}
+                    />
+                  </div>
                 ),
               },
               {
@@ -181,29 +245,40 @@ const Transfer = () => {
                     <HistoryOutlined /> {t("transfer.tab_record") || "调拨记录"}
                   </span>
                 ),
-                // 👈 核心修复：key={i18n.language}
                 children: (
-                  <Table
-                    key={i18n.language}
-                    rowKey="id"
-                    columns={recordColumns}
-                    dataSource={records}
-                    pagination={false}
-                    scroll={{ y: "calc(100vh - 320px)" }}
-                    style={{ padding: "0 16px" }}
-                  />
+                  <div style={{ paddingBottom: 16 }}>
+                    <Space style={{ marginBottom: 12, paddingLeft: 16 }}>
+                      <Button
+                        icon={<ReloadOutlined />}
+                        onClick={fetchRecords}
+                        size="small"
+                      >
+                        {t("inventory.refresh") || "刷新"}
+                      </Button>
+                    </Space>
+                    <Table
+                      key={i18n.language}
+                      rowKey="id"
+                      columns={recordColumns}
+                      dataSource={records}
+                      pagination={{ pageSize: 10, size: "small" }}
+                      scroll={{ x: "max-content" }}
+                    />
+                  </div>
                 ),
               },
             ]}
           />
         </Card>
       </Col>
+
+      {/* 调拨弹窗 */}
       <Modal
         title={`${t("transfer.modal_title") || "发起调拨 - "}${currentRecord?.goods_name || ""}`}
         open={isModalOpen}
         onOk={() => form.submit()}
         onCancel={() => setIsModalOpen(false)}
-        okText={t("transfer.confirm") || "确认"}
+        okText={t("transfer.confirm") || "确认调拨"}
         cancelText={t("transfer.cancel") || "取消"}
       >
         <Form form={form} layout="vertical" onFinish={handleTransfer}>
@@ -221,8 +296,8 @@ const Transfer = () => {
           >
             <Select
               options={[
-                { value: 1, label: "A" },
-                { value: 2, label: "B" },
+                { value: 1, label: "A店" },
+                { value: 2, label: "B店" },
               ]}
             />
           </Form.Item>
@@ -246,4 +321,5 @@ const Transfer = () => {
     </Row>
   );
 };
+
 export default Transfer;

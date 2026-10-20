@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Row, Col, Card, Statistic, Table, Tag, message } from "antd";
+import { Row, Col, Card, Statistic, Table, Tag, Modal, Button } from "antd";
 import {
   AppstoreOutlined,
   ShoppingCartOutlined,
@@ -46,6 +46,8 @@ const Dashboard = () => {
     todaySalesCount: 0,
   });
   const [recentSales, setRecentSales] = useState([]);
+  // 👈 登录后提醒弹窗
+  const [alertVisible, setAlertVisible] = useState(false);
 
   useEffect(() => {
     fetchData();
@@ -82,14 +84,19 @@ const Dashboard = () => {
       setTodos(resTodos.data);
       setRecentSales(resRecent.data);
 
+      // 👈 有预警时，弹出 Modal 提醒
       if (resWarnings.data.length > 0) {
-        message.warning(
-          `⚠️ ${resWarnings.data.length} ${t("dashboard.pending_replenish") || "个商品需要补货"}`,
-        );
+        setAlertVisible(true);
       }
     } catch (error) {
-      message.error("数据获取失败");
+      console.error(error);
     }
+  };
+
+  // 跳转到智能补货页处理
+  const handleAlertView = () => {
+    setAlertVisible(false);
+    window.location.href = "/replenish";
   };
 
   const lineOption = {
@@ -137,7 +144,7 @@ const Dashboard = () => {
         label: { show: true, formatter: "{b}: {c}", fontSize: 10 },
         data: categoryData.map((item) => ({
           value: item.value,
-          name: item.name,
+          name: t(`category.${item.name}`) || item.name,
         })),
         animationDuration: 1500,
       },
@@ -207,6 +214,62 @@ const Dashboard = () => {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+      {/* 👈 登录后提醒弹窗 */}
+      <Modal
+        title={
+          <span style={{ color: "#faad14" }}>
+            <WarningOutlined /> {t("dashboard.alert_title") || "库存预警提醒"}
+          </span>
+        }
+        open={alertVisible}
+        onCancel={() => setAlertVisible(false)}
+        footer={[
+          <Button key="ignore" onClick={() => setAlertVisible(false)}>
+            {t("dashboard.alert_ignore") || "忽略"}
+          </Button>,
+          <Button key="view" type="primary" onClick={handleAlertView}>
+            {t("dashboard.alert_view") || "查看详情"}
+          </Button>,
+        ]}
+      >
+        <p style={{ fontSize: 14, lineHeight: 1.8 }}>
+          {t("dashboard.alert_content", { count: warnings.length }) ||
+            `当前有 ${warnings.length} 个商品库存低于安全线，建议尽快处理补货。`}
+        </p>
+        <div style={{ maxHeight: 200, overflow: "auto", marginTop: 12 }}>
+          {warnings.slice(0, 5).map((item) => (
+            <div
+              key={item.id}
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                padding: "6px 0",
+                borderBottom: "1px solid #f0f0f0",
+                fontSize: 13,
+              }}
+            >
+              <span>{item.goods_name}</span>
+              <span>
+                <Tag color="red">库存 {item.stock}</Tag>
+                <Tag color="green">补 {item.suggest_quantity}</Tag>
+              </span>
+            </div>
+          ))}
+          {warnings.length > 5 && (
+            <div
+              style={{
+                textAlign: "center",
+                padding: "8px 0",
+                color: "#888",
+                fontSize: 12,
+              }}
+            >
+              还有 {warnings.length - 5} 条预警...
+            </div>
+          )}
+        </div>
+      </Modal>
+
       {/* 第一行：核心指标 */}
       <Row gutter={8}>
         <Col span={6}>

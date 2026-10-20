@@ -1,6 +1,6 @@
 /**
  * 商品管理页面
- * 支持：商品列表、销售记录、URL 参数控制 Tab 切换、编辑商品
+ * 支持：列表、新增、编辑、入库、删除、批量删除、上下架、批量改价、导出
  */
 import React, { useState, useEffect } from "react";
 import {
@@ -16,12 +16,19 @@ import {
   Tag,
   Tabs,
   Button,
+  Popconfirm,
 } from "antd";
 import {
   PlusOutlined,
   QrcodeOutlined,
   ImportOutlined,
   EditOutlined,
+  DeleteOutlined,
+  DownloadOutlined,
+  DollarOutlined,
+  StopOutlined,
+  CheckCircleOutlined,
+  ReloadOutlined,
 } from "@ant-design/icons";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import {
@@ -30,6 +37,10 @@ import {
   deleteProduct,
   stockIn,
   updateProduct,
+  batchDeleteProducts,
+  updateProductStatus,
+  batchUpdatePrice,
+  exportProducts,
 } from "../api/product";
 import { getSalesList } from "../api/sales";
 import AuthButton from "../components/AuthButton";
@@ -48,10 +59,13 @@ const Product = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isStockInOpen, setIsStockInOpen] = useState(false);
+  const [isBatchPriceOpen, setIsBatchPriceOpen] = useState(false);
   const [currentGoods, setCurrentGoods] = useState(null);
+  const [selectedRowKeys, setSelectedRowKeys] = useState([]);
   const [form] = Form.useForm();
   const [editForm] = Form.useForm();
   const [stockInForm] = Form.useForm();
+  const [batchPriceForm] = Form.useForm();
   const userInfo = JSON.parse(localStorage.getItem("userInfo") || "{}");
 
   const fetchData = async () => {
@@ -116,6 +130,18 @@ const Product = () => {
     }
   };
 
+  const handleBatchDelete = async () => {
+    if (selectedRowKeys.length === 0) return message.warning("请先勾选商品");
+    try {
+      await batchDeleteProducts(selectedRowKeys);
+      message.success(`成功删除 ${selectedRowKeys.length} 个商品`);
+      setSelectedRowKeys([]);
+      fetchData();
+    } catch (error) {
+      message.error("批量删除失败");
+    }
+  };
+
   const handleStockIn = async (values) => {
     try {
       await stockIn({ goods_id: currentGoods.id, quantity: values.quantity });
@@ -125,6 +151,55 @@ const Product = () => {
       fetchData();
     } catch (error) {
       message.error("入库失败");
+    }
+  };
+
+  const handleToggleStatus = async (record) => {
+    try {
+      const newStatus = record.status === "off_sale" ? "on_sale" : "off_sale";
+      await updateProductStatus(record.id, newStatus);
+      message.success(newStatus === "on_sale" ? "已上架" : "已下架");
+      fetchData();
+    } catch (error) {
+      message.error("操作失败");
+    }
+  };
+
+  const handleBatchPrice = async (values) => {
+    if (selectedRowKeys.length === 0) return message.warning("请先勾选商品");
+    try {
+      await batchUpdatePrice({
+        ids: selectedRowKeys,
+        adjustType: values.adjustType,
+        adjustValue: values.adjustValue,
+      });
+      message.success(`成功修改 ${selectedRowKeys.length} 个商品的价格`);
+      setIsBatchPriceOpen(false);
+      batchPriceForm.resetFields();
+      setSelectedRowKeys([]);
+      fetchData();
+    } catch (error) {
+      message.error("批量改价失败");
+    }
+  };
+
+  const handleExport = async () => {
+    try {
+      const res = await exportProducts();
+      const blob = new Blob([res], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `商品清单_${new Date().getTime()}.xlsx`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+      message.success("导出成功");
+    } catch (error) {
+      message.error("导出失败");
     }
   };
 
@@ -145,7 +220,7 @@ const Product = () => {
       title: t("product.category") || "分类",
       dataIndex: "category",
       key: "category",
-      render: (text) => <Tag color="blue">{text}</Tag>,
+      render: (text) => <Tag color="blue">{t(`category.${text}`) || text}</Tag>,
     },
     { title: t("product.spec") || "规格", dataIndex: "spec", key: "spec" },
     {
@@ -186,13 +261,27 @@ const Product = () => {
       render: (text) => (text === 1 ? "A店" : "B店"),
     },
     {
+      title: t("product.status") || "状态",
+      dataIndex: "status",
+      key: "status",
+      width: 90,
+      render: (text) =>
+        text === "off_sale" ? (
+          <Tag color="red">{t("product.status_off") || "已下架"}</Tag>
+        ) : (
+          <Tag color="green">{t("product.status_on") || "上架中"}</Tag>
+        ),
+    },
+    {
       title: t("product.action") || "操作",
       key: "action",
+      width: 260,
       render: (_, record) => (
-        <Space>
+        <Space size="small">
           <AuthButton
             permission="product:stock_in"
             type="link"
+            size="small"
             icon={<ImportOutlined />}
             onClick={() => {
               setCurrentGoods(record);
@@ -204,26 +293,51 @@ const Product = () => {
           <AuthButton
             permission="product:add"
             type="link"
+            size="small"
             icon={<EditOutlined />}
             onClick={() => openEditModal(record)}
           >
             {t("product.edit") || "编辑"}
           </AuthButton>
+          <AuthButton
+            permission="product:add"
+            type="link"
+            size="small"
+            icon={
+              record.status === "off_sale" ? (
+                <CheckCircleOutlined />
+              ) : (
+                <StopOutlined />
+              )
+            }
+            onClick={() => handleToggleStatus(record)}
+          >
+            {record.status === "off_sale"
+              ? t("product.on_sale") || "上架"
+              : t("product.off_sale") || "下架"}
+          </AuthButton>
           <Button
             type="link"
+            size="small"
             icon={<QrcodeOutlined />}
             onClick={() => message.info("正在生成条码...")}
           >
             {t("product.barcode") || "条码"}
           </Button>
-          <AuthButton
-            permission="product:delete"
-            type="link"
-            danger
-            onClick={() => handleDelete(record.id)}
+          <Popconfirm
+            title="确定删除吗？"
+            onConfirm={() => handleDelete(record.id)}
           >
-            {t("product.delete") || "删除"}
-          </AuthButton>
+            <AuthButton
+              permission="product:delete"
+              type="link"
+              size="small"
+              danger
+              icon={<DeleteOutlined />}
+            >
+              {t("product.delete") || "删除"}
+            </AuthButton>
+          </Popconfirm>
         </Space>
       ),
     },
@@ -297,6 +411,31 @@ const Product = () => {
                   >
                     {t("product.add") || "新增商品"}
                   </AuthButton>
+                  <AuthButton
+                    permission="product:delete"
+                    danger
+                    icon={<DeleteOutlined />}
+                    onClick={handleBatchDelete}
+                    disabled={selectedRowKeys.length === 0}
+                  >
+                    {t("product.batch_delete") || "批量删除"} (
+                    {selectedRowKeys.length})
+                  </AuthButton>
+                  <AuthButton
+                    permission="product:add"
+                    icon={<DollarOutlined />}
+                    onClick={() => setIsBatchPriceOpen(true)}
+                    disabled={selectedRowKeys.length === 0}
+                  >
+                    {t("product.batch_price") || "批量改价"} (
+                    {selectedRowKeys.length})
+                  </AuthButton>
+                  <Button icon={<DownloadOutlined />} onClick={handleExport}>
+                    {t("product.export") || "导出商品清单"}
+                  </Button>
+                  <Button icon={<ReloadOutlined />} onClick={fetchData}>
+                    {t("inventory.refresh") || "刷新"}
+                  </Button>
                   {searchKeyword && (
                     <Tag
                       color="blue"
@@ -320,6 +459,10 @@ const Product = () => {
                   loading={loading}
                   pagination={{ pageSize: 10 }}
                   scroll={{ x: "max-content" }}
+                  rowSelection={{
+                    selectedRowKeys,
+                    onChange: setSelectedRowKeys,
+                  }}
                 />
               </>
             ),
@@ -493,6 +636,52 @@ const Product = () => {
             rules={[{ required: true }]}
           >
             <InputNumber min={1} style={{ width: "100%" }} />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      {/* 批量改价弹窗 */}
+      <Modal
+        title={t("product.batch_price_title") || "批量改价"}
+        open={isBatchPriceOpen}
+        onOk={() => batchPriceForm.submit()}
+        onCancel={() => setIsBatchPriceOpen(false)}
+      >
+        <p style={{ color: "#888", fontSize: 12 }}>
+          {t("product.selected_count", { count: selectedRowKeys.length }) ||
+            `已选择 ${selectedRowKeys.length} 项`}
+        </p>
+        <Form
+          form={batchPriceForm}
+          layout="vertical"
+          onFinish={handleBatchPrice}
+          initialValues={{ adjustType: "set" }}
+        >
+          <Form.Item
+            name="adjustType"
+            label={t("product.adjust_type") || "调整方式"}
+            rules={[{ required: true }]}
+          >
+            <Select
+              options={[
+                {
+                  value: "increase",
+                  label: t("product.adjust_increase") || "加价",
+                },
+                {
+                  value: "decrease",
+                  label: t("product.adjust_decrease") || "减价",
+                },
+                { value: "set", label: t("product.adjust_set") || "直接设置" },
+              ]}
+            />
+          </Form.Item>
+          <Form.Item
+            name="adjustValue"
+            label={t("product.adjust_value") || "调整数值"}
+            rules={[{ required: true }]}
+          >
+            <InputNumber min={0} style={{ width: "100%" }} />
           </Form.Item>
         </Form>
       </Modal>
